@@ -1,0 +1,20 @@
+{
+    "name": "zusux/db",
+    "description": "mysql 连接管理orm",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "周旭鑫",
+            "email": "zhxx136@qq.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {
+        "php": ">=7.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Zusux\\": "src/"
+        }
+    }
+}
