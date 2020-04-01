@@ -1,5 +1,5 @@
 <?php
-namespace Zusux;
+namespace zusux;
 use Exception;
 class Db{
 
