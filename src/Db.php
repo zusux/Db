@@ -105,6 +105,7 @@ class Db{
     // SQL表达式
     protected $selectSql    = 'SELECT%DISTINCT% %FIELD% FROM %TABLE%%FORCE%%JOIN%%WHERE%%GROUP%%HAVING%%UNION%%ORDER%%LIMIT%%LOCK%%COMMENT%';
     protected $insertSql    = 'INSERT INTO %TABLE% (%FIELD%) VALUES (%DATA%) %COMMENT%';
+    protected $maxSql    = 'SELECT MAX(%FIELD%) as result FROM %TABLE% ';
     protected $insertAllSql = 'INSERT INTO %TABLE% (%FIELD%) VALUES %DATA% %COMMENT%';
     protected $updateSql    = 'UPDATE %TABLE% SET %SET% %JOIN% %WHERE% %ORDER%%LIMIT% %LOCK%%COMMENT%';
     protected $deleteSql    = 'DELETE FROM %TABLE% %USING% %JOIN% %WHERE% %ORDER%%LIMIT% %LOCK%%COMMENT%';
@@ -119,6 +120,8 @@ class Db{
     // 绑定参数
     protected $bind = [];
 
+    private static  $ins;
+
 
     public function __construct(array $config = [])
     {
@@ -129,6 +132,13 @@ class Db{
         //$this->connect();
         //$this->linkID = $this->getConnection();
 
+    }
+
+    public static function instance($config=[]){
+        if(!self::$ins){
+            self::$ins = new static($config);
+        }
+        return self::$ins;
     }
 
     public function reset(){
@@ -348,15 +358,44 @@ class Db{
         $this->havingCond = $cond;
         return $this;
     }
-    public function where(string $field,string $value,string $condition='='){
-        $bindField = 'w_'.$field;
-        $time = $this->tempCount[$bindField] ?? 0;
-        $this->tempCount[$bindField] = $this->tempCount[$bindField] ?? 0;
-        $this->tempCount[$bindField]++;
-        $fullBindField = $bindField.$time;
 
-        $this->where[] = implode(' ',['`'.$field.'`',$condition,':'.$fullBindField]);
-        $this->whereBind[$fullBindField] = $value;
+    /**
+     * @param string $field
+     * @param $value array|string
+     * @param string $condition
+     * @return $this
+     */
+    public function where(string $field, $value,string $condition='='){
+
+        if(is_array($value)){
+            $fullBindArr = [];
+            foreach($value as $one){
+                $bindField = 'w_'.$field;
+                $time = $this->tempCount[$bindField] ?? 0;
+                $this->tempCount[$bindField] = $this->tempCount[$bindField] ?? 0;
+                $this->tempCount[$bindField]++;
+                $fullBindField = $bindField.$time;
+                $this->whereBind[$fullBindField] = $one;
+                $fullBindArr[] = ':'.$fullBindField;
+            }
+            if($fullBindArr){
+                $instr = implode(',',$fullBindArr);
+                $this->where[] = implode(' ',['`'.$field.'`',$condition,'('.$instr.')']);;
+            }else{
+                throw new Exception('value 是数组类型不能为空值');
+            }
+        }else{
+            $bindField = 'w_'.$field;
+            $time = $this->tempCount[$bindField] ?? 0;
+            $this->tempCount[$bindField] = $this->tempCount[$bindField] ?? 0;
+            $this->tempCount[$bindField]++;
+            $fullBindField = $bindField.$time;
+
+            $this->where[] = implode(' ',['`'.$field.'`',$condition,':'.$fullBindField]);
+            $this->whereBind[$fullBindField] = $value;
+        }
+
+
         return $this;
     }
 
@@ -415,47 +454,47 @@ class Db{
     }
     protected function buildSelectSql(){
 
-    $whereStr = implode(' '.$this->whereCond.' ',$this->where);
-    $havingStr = implode(' '.$this->havingCond.' ',$this->having);
-    $groupStr = implode(',',$this->group);
-    $orderStr = implode(',',$this->order);
+        $whereStr = implode(' '.$this->whereCond.' ',$this->where);
+        $havingStr = implode(' '.$this->havingCond.' ',$this->having);
+        $groupStr = implode(',',$this->group);
+        $orderStr = implode(',',$this->order);
 
-    $sql = str_replace(
-        [
-            '%DISTINCT%',
-            '%FIELD%',
-            '%TABLE%',
-            '%FORCE%',
-            '%JOIN%',
-            '%WHERE%',
-            '%GROUP%',
-            '%HAVING%',
-            '%UNION%',
-            '%ORDER%',
-            '%LIMIT%',
-            '%LOCK%',
-            '%COMMENT%'
-        ],
-        [
-            $this->distinct,
-            $this->field,
-            $this->table.' '.$this->alias,
-            $this->force,
-            implode(' ',$this->join),
-            $whereStr? ' where '.$whereStr : " ",
-            $groupStr? ' group by '.$groupStr: " ",
-            $havingStr? ' having '.$havingStr: " ",
-            $this->union,
-            $orderStr? ' order by '.$orderStr:" ",
-            $this->limit,
-            $this->lock,
-            $this->comment,
+        $sql = str_replace(
+            [
+                '%DISTINCT%',
+                '%FIELD%',
+                '%TABLE%',
+                '%FORCE%',
+                '%JOIN%',
+                '%WHERE%',
+                '%GROUP%',
+                '%HAVING%',
+                '%UNION%',
+                '%ORDER%',
+                '%LIMIT%',
+                '%LOCK%',
+                '%COMMENT%'
+            ],
+            [
+                $this->distinct,
+                $this->field,
+                $this->table.' '.$this->alias,
+                $this->force,
+                implode(' ',$this->join),
+                $whereStr? ' where '.$whereStr : " ",
+                $groupStr? ' group by '.$groupStr: " ",
+                $havingStr? ' having '.$havingStr: " ",
+                $this->union,
+                $orderStr? ' order by '.$orderStr:" ",
+                $this->limit,
+                $this->lock,
+                $this->comment,
 
-        ],
-        $this->selectSql
-    );
-    return $sql;
-}
+            ],
+            $this->selectSql
+        );
+        return $sql;
+    }
 
 
     /**
@@ -518,6 +557,32 @@ class Db{
             $this->updateSql
         );
         return $sql;
+    }
+
+    protected function buildMaxSql($filed){
+        $sql = str_replace(
+            [
+                '%FIELD%',
+                '%TABLE%',
+            ],
+            [
+                $filed,
+                $this->table.' '.$this->alias,
+            ],
+            $this->maxSql
+        );
+        return $sql;
+    }
+    public function max($field){
+        $sql = $this->buildMaxSql($field);
+        if($this->fetchSql){
+            $result = $this->getRealSql($sql, []);
+        }else{
+            $result = $this->query($sql,[]);
+        }
+        $this->reset();
+        $return = current($result);
+        return $return['result'] ?? null;
     }
 
 

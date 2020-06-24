@@ -5,8 +5,8 @@ use \Swoole\Database\PDOPool;
 use Exception;
 class PoolDb{
 
-    protected  $queryTimes=0;
-    protected  $executeTimes=0;
+    protected $queryTimes=0;
+    protected $executeTimes=0;
 
     protected $fetchSql=false;
     protected $table = "";
@@ -35,13 +35,6 @@ class PoolDb{
     // 事务指令数
     protected $transTimes = 0;
 
-
-
-    // 查询结果类型
-    protected $fetchType = \PDO::FETCH_ASSOC;
-    // 字段属性大小写
-    protected $attrCase = \PDO::CASE_LOWER;
-
     // SQL表达式
     protected $selectSql    = 'SELECT%DISTINCT% %FIELD% FROM %TABLE%%FORCE%%JOIN%%WHERE%%GROUP%%HAVING%%UNION%%ORDER%%LIMIT%%LOCK%%COMMENT%';
     protected $insertSql    = 'INSERT INTO %TABLE% (%FIELD%) VALUES (%DATA%) %COMMENT%';
@@ -50,8 +43,7 @@ class PoolDb{
     protected $updateSql    = 'UPDATE %TABLE% SET %SET% %JOIN% %WHERE% %ORDER%%LIMIT% %LOCK%%COMMENT%';
     protected $deleteSql    = 'DELETE FROM %TABLE% %USING% %JOIN% %WHERE% %ORDER%%LIMIT% %LOCK%%COMMENT%';
 
-    /** @var PDOStatement PDO操作实例 */
-    protected $PDOStatement;
+    /** @var 携程连接池 PDO操作实例 */
     protected $pool;
 
     /** @var string 当前SQL指令 */
@@ -61,8 +53,7 @@ class PoolDb{
     // 绑定参数
     protected $bind = [];
 
-    private static  $ins;
-
+    private static $ins;
 
     public function __construct($pool)
     {
@@ -260,47 +251,47 @@ class PoolDb{
     }
     protected function buildSelectSql(){
 
-    $whereStr = implode(' '.$this->whereCond.' ',$this->where);
-    $havingStr = implode(' '.$this->havingCond.' ',$this->having);
-    $groupStr = implode(',',$this->group);
-    $orderStr = implode(',',$this->order);
+        $whereStr = implode(' '.$this->whereCond.' ',$this->where);
+        $havingStr = implode(' '.$this->havingCond.' ',$this->having);
+        $groupStr = implode(',',$this->group);
+        $orderStr = implode(',',$this->order);
 
-    $sql = str_replace(
-        [
-            '%DISTINCT%',
-            '%FIELD%',
-            '%TABLE%',
-            '%FORCE%',
-            '%JOIN%',
-            '%WHERE%',
-            '%GROUP%',
-            '%HAVING%',
-            '%UNION%',
-            '%ORDER%',
-            '%LIMIT%',
-            '%LOCK%',
-            '%COMMENT%'
-        ],
-        [
-            $this->distinct,
-            $this->field,
-            $this->table.' '.$this->alias,
-            $this->force,
-            implode(' ',$this->join),
-            $whereStr? ' where '.$whereStr : " ",
-            $groupStr? ' group by '.$groupStr: " ",
-            $havingStr? ' having '.$havingStr: " ",
-            $this->union,
-            $orderStr? ' order by '.$orderStr:" ",
-            $this->limit,
-            $this->lock,
-            $this->comment,
+        $sql = str_replace(
+            [
+                '%DISTINCT%',
+                '%FIELD%',
+                '%TABLE%',
+                '%FORCE%',
+                '%JOIN%',
+                '%WHERE%',
+                '%GROUP%',
+                '%HAVING%',
+                '%UNION%',
+                '%ORDER%',
+                '%LIMIT%',
+                '%LOCK%',
+                '%COMMENT%'
+            ],
+            [
+                $this->distinct,
+                $this->field,
+                $this->table.' '.$this->alias,
+                $this->force,
+                implode(' ',$this->join),
+                $whereStr? ' where '.$whereStr : " ",
+                $groupStr? ' group by '.$groupStr: " ",
+                $havingStr? ' having '.$havingStr: " ",
+                $this->union,
+                $orderStr? ' order by '.$orderStr:" ",
+                $this->limit,
+                $this->lock,
+                $this->comment,
 
-        ],
-        $this->selectSql
-    );
-    return $sql;
-}
+            ],
+            $this->selectSql
+        );
+        return $sql;
+    }
 
 
     /**
@@ -587,67 +578,8 @@ class PoolDb{
 
 
 
-    /**
-     * 存储过程的输入输出参数绑定
-     * @access public
-     * @param array $bind 要绑定的参数列表
-     * @return void
-     * @throws Exception
-     */
-    protected function bindParam($bind)
+    public function query($sql, $bind = [])
     {
-        foreach ($bind as $key => $val) {
-            $param = is_numeric($key) ? $key + 1 : ':' . $key;
-            if (is_array($val)) {
-                array_unshift($val, $param);
-                $result = call_user_func_array([$this->PDOStatement, 'bindParam'], $val);
-            } else {
-                $result = $this->PDOStatement->bindValue($param, $val);
-            }
-            if (!$result) {
-                $param = array_shift($val);
-                throw new \Exception(
-                    "Error occurred  when binding parameters '{$param}'\r\n".
-                    $this->getLastsql()."\r\n"
-                );
-            }
-        }
-    }
-
-    /**
-     * 参数绑定
-     * 支持 ['name'=>'value','id'=>123] 对应命名占位符
-     * 或者 ['value',123] 对应问号占位符
-     * @access public
-     * @param array $bind 要绑定的参数列表
-     * @return void
-     * @throws Exception
-     */
-    protected function bindValue(array $bind = [])
-    {
-        foreach ($bind as $key => $val) {
-            // 占位符
-            $param = is_numeric($key) ? $key + 1 : ':' . $key;
-            if (is_array($val)) {
-                if (\PDO::PARAM_INT == $val[1] && '' === $val[0]) {
-                    $val[0] = 0;
-                }
-                $result = $this->PDOStatement->bindValue($param, $val[0], $val[1]);
-            } else {
-                $result = $this->PDOStatement->bindValue($param, $val);
-            }
-            if (!$result) {
-                throw new \Exception(
-                    "Error occurred  when binding parameters '{$param}'\r\n".
-                    $this->getLastsql()."\r\n"
-                );
-            }
-        }
-    }
-
-    public function query($sql, $bind = [], $master = false, $pdo = false,$fetchAll=true)
-    {
-
         // 记录SQL语句
         $this->queryStr = $sql;
         if ($bind) {
@@ -655,32 +587,20 @@ class PoolDb{
         }
         $this->queryTimes++;
 
-
         $db = $this->pool->get();
         $result = [];
         try {
             // 预处理
-            $this->PDOStatement = $db->prepare($sql);
-            // 是否为存储过程调用
-            $procedure = in_array(strtolower(substr(trim($sql), 0, 4)), ['call', 'exec']);
-            // 参数绑定
-            if ($procedure) {
-                $this->bindParam($bind);
-            } else {
-                $this->bindValue($bind);
-            }
+            $statement = $db->prepare($sql);
             // 执行查询
-            $this->PDOStatement->execute();
+            $statement->execute($bind);
             // 返回结果集
-            $result = $this->getResult($pdo, $procedure,$fetchAll);
-            $this->PDOStatement = null;
+            $result = $statement->fetchAll();
             $this->pool->put($db);
         } catch (\PDOException $e) {
-            var_dump($e->getMessage());
+            echo "[pdo query error] ".$e->getMessage().PHP_EOL;
             $this->pool->put($db);
-            //throw new \PDOException($e->getMessage()."|".$this->getLastsql());
         }
-
         return $result;
     }
 
@@ -694,7 +614,7 @@ class PoolDb{
      * @throws PDOException
      * @throws \Exception
      */
-    public function execute($sql, $bind = [], $query = null)
+    public function execute($sql, $bind = [])
     {
         // 记录SQL语句
         $this->queryStr = $sql;
@@ -705,83 +625,27 @@ class PoolDb{
         $this->executeTimes++;
 
         $db = $this->pool->get();
-        $num = 0;
+        $this->numRows = 0;
+        $result = false;
         try {
             // 预处理
-            $this->PDOStatement = $db->prepare($sql);
-            // 是否为存储过程调用
-            $procedure = in_array(strtolower(substr(trim($sql), 0, 4)), ['call', 'exec']);
-            // 参数绑定
-            if ($procedure) {
-                $this->bindParam($bind);
-            } else {
-                $this->bindValue($bind);
-            }
+            $statement = $db->prepare($sql);
+
             // 执行语句
-            $this->PDOStatement->execute();
-            $this->numRows = $this->PDOStatement->rowCount();
-            $this->PDOStatement = null;
-            $num = $this->numRows;
+            $result = $statement->execute($bind);
+
+            $this->numRows = $statement->rowCount();
             $this->pool->put($db);
         } catch (\PDOException $e) {
-            var_dump($e->getMessage());
+            echo "[pdo execute error] ".$e->getMessage().PHP_EOL;
             $this->pool->put($db);
-            //throw new \PDOException($e->getMessage().'|'.$this->getLastsql());
         }
-        return $num;
+        return $result;
     }
 
     public function fetchSql(bool $fetchSql=true){
         $this->fetchSql = $fetchSql;
         return $this;
-    }
-
-
-
-    /**
-     * 获得数据集数组
-     * @access protected
-     * @param bool   $pdo 是否返回PDOStatement
-     * @param bool   $procedure 是否存储过程
-     * @return PDOStatement|array
-     */
-    protected function getResult($pdo = false, $procedure = false,$fetchAll = true)
-    {
-        if ($pdo) {
-            // 返回PDOStatement对象处理
-            return $this->PDOStatement;
-        }
-        if ($procedure) {
-            // 存储过程返回结果
-            return $this->procedure();
-        }
-        if($fetchAll){
-            $result        = $this->PDOStatement->fetchAll($this->fetchType);
-            $this->numRows = count($result);
-        }else{
-            $result        = $this->PDOStatement->fetch($this->fetchType);
-            $this->numRows = 1;
-        }
-
-        return $result;
-    }
-
-    /**
-     * 获得存储过程数据集
-     * @access protected
-     * @return array
-     */
-    protected function procedure()
-    {
-        $item = [];
-        do {
-            $result = $this->getResult();
-            if ($result) {
-                $item[] = $result;
-            }
-        } while ($this->PDOStatement->nextRowset());
-        $this->numRows = count($item);
-        return $item;
     }
 
 
