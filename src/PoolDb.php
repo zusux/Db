@@ -61,9 +61,7 @@ class PoolDb{
     }
 
     public static function instance($pool){
-        if(!self::$ins){
-            self::$ins = new static($pool);
-        }
+        self::$ins = new static($pool);
         return self::$ins;
     }
 
