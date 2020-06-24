@@ -3,7 +3,7 @@ namespace zusux;
 use \Swoole\Database\PDOConfig;
 use \Swoole\Database\PDOPool;
 use Exception;
-class PoolDb{
+class Pool{
 
     protected $queryTimes=0;
     protected $executeTimes=0;
@@ -57,13 +57,38 @@ class PoolDb{
     private static $ins;
 
 
-    public function __construct($pool)
+    public function __construct($config,$pool)
     {
-        self::$pool = $pool;
+        if($pool){
+            self::$pool = $pool;
+        }else{
+            if(!self::$pool){
+                self::$pool = new PDOPool((new PDOConfig)
+                    ->withHost($config['hostname'])
+                    ->withPort($config['hostport'])
+                    ->withDbName($config['database'])
+                    ->withCharset($config['charset'])
+                    ->withUsername($config['username'])
+                    ->withPassword($config['password'])
+                );
+            }
+        }
     }
 
-    public static function instance($pool){
-        self::$ins = new static($pool);
+    public static function instance($config){
+        if(!self::$pool){
+            self::$pool = new PDOPool((new PDOConfig)
+                ->withHost($config['hostname'])
+                ->withPort($config['hostport'])
+                ->withDbName($config['database'])
+                ->withCharset($config['charset'])
+                ->withUsername($config['username'])
+                ->withPassword($config['password'])
+            );
+            self::$ins = new static($config,self::$pool);
+        }else{
+            self::$ins = new static($config,self::$pool);
+        }
         return self::$ins;
     }
 
