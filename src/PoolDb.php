@@ -679,7 +679,6 @@ class PoolDb{
 
     public function close()
     {
-        self::$pool = null;
         // 释放查询
         $this->free();
         return $this;
@@ -690,7 +689,6 @@ class PoolDb{
      */
     public function free()
     {
-        $this->PDOStatement = null;
     }
 
     /**
@@ -757,11 +755,6 @@ class PoolDb{
     {
         $this->reset();
         // 释放查询
-        if ($this->PDOStatement) {
-            $this->free();
-        }
-        // 关闭连接
-        $this->close();
     }
 }
 
