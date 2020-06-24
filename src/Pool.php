@@ -686,7 +686,11 @@ class Pool{
 
             // 执行语句
             $result = $statement->execute($bind);
-
+            //获取自增id
+            $id = $db->lastInsertId();
+            if($result && $id){
+                $result = $id;
+            }
             $this->numRows = $statement->rowCount();
             self::$pool->put($db);
         } catch (\PDOException $e) {
