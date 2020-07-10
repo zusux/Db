@@ -1,11 +1,10 @@
 <?php
 namespace zusux;
 use Exception;
+
 class Db{
-
-    protected static $queryTimes=0;
-    protected static $executeTimes=0;
-
+    public static $ins;
+    protected $dsn="mysql:host=%host%;dbname=%dbname%";
     protected $config = [
         // 数据库类型
         'type'            => 'mysql',
@@ -52,7 +51,7 @@ class Db{
         // 是否需要进行SQL性能分析
         'sql_explain'     => false,
         // 是否需要断线重连
-        'break_reconnect' => false,
+        'break_reconnect' => true,
     ];
 
     // PDO连接参数
@@ -62,107 +61,34 @@ class Db{
         \PDO::ATTR_ORACLE_NULLS      => \PDO::NULL_NATURAL,
         \PDO::ATTR_STRINGIFY_FETCHES => false,
         \PDO::ATTR_EMULATE_PREPARES  => false,
-        \PDO::ATTR_PERSISTENT => true //持久连接
+        \PDO::ATTR_PERSISTENT => false //持久连接
     ];
-    protected $fetchSql=false;
-    protected $table = "";
-    protected $alias = "";
-    protected $distinct = "";
-    protected $where = [];
-    protected $whereCond = 'and'; //全局连接条件
-    protected $group = [];
-    protected $join = [];
-    protected $order = [];
-    protected $field = "*";
-    protected $data = [];
-    protected $having = [];
-    protected $havingCond = 'and';
-    protected $limit = "";
-    protected $force = "";
-    protected $union = "";
-    protected $lock = "";
-    protected $comment = "";
-
-    protected $whereBind = [];
-    protected $havingBind = [];
-    protected $tempCount = [];
-    protected $dataBind = [];
-
-    // 事务指令数
-    protected $transTimes = 0;
 
     private $links=[];
     /** @var PDO 当前连接ID */
     protected $linkID;
-    protected $linkRead;
-    protected $linkWrite;
     // 查询结果类型
     protected $fetchType = \PDO::FETCH_ASSOC;
     // 字段属性大小写
     protected $attrCase = \PDO::CASE_LOWER;
 
-    protected $dsn="mysql:host=%host%;dbname=%dbname%";
-    // SQL表达式
-    protected $selectSql    = 'SELECT%DISTINCT% %FIELD% FROM %TABLE%%FORCE%%JOIN%%WHERE%%GROUP%%HAVING%%UNION%%ORDER%%LIMIT%%LOCK%%COMMENT%';
-    protected $insertSql    = 'INSERT INTO %TABLE% (%FIELD%) VALUES (%DATA%) %COMMENT%';
-    protected $maxSql    = 'SELECT MAX(%FIELD%) as result FROM %TABLE% ';
-    protected $insertAllSql = 'INSERT INTO %TABLE% (%FIELD%) VALUES %DATA% %COMMENT%';
-    protected $updateSql    = 'UPDATE %TABLE% SET %SET% %JOIN% %WHERE% %ORDER%%LIMIT% %LOCK%%COMMENT%';
-    protected $deleteSql    = 'DELETE FROM %TABLE% %USING% %JOIN% %WHERE% %ORDER%%LIMIT% %LOCK%%COMMENT%';
-
-    /** @var PDOStatement PDO操作实例 */
-    protected $PDOStatement;
-
-    /** @var string 当前SQL指令 */
-    protected $queryStr = '';
-    // 返回或者影响记录数
-    protected $numRows = 0;
-    // 绑定参数
-    protected $bind = [];
-
-    private static  $ins;
-
-
-    public function __construct(array $config = [])
+    private function __construct(array $config = [])
     {
         if (!empty($config)) {
             $this->config = array_merge($this->config, $config);
         }
-        $this->reset();
-        //$this->connect();
-        //$this->linkID = $this->getConnection();
-
+        $this->initConnect();
     }
 
     public static function instance($config=[]){
         if(!self::$ins){
             self::$ins = new static($config);
         }
-        return self::$ins;
-    }
-
-    public function reset(){
-        $this->fetchSql = false;
-        $this->whereCond = 'and';
-        $this->havingCond = 'and';
-        $this->alias = "";
-        $this->distinct = "";
-        $this->field = "*";
-        $this->limit = "";
-        $this->force = "";
-        $this->comment = "";
-        $this->lock = "";
-
-        $this->where = [];
-        $this->group = [];
-        $this->join = [];
-        $this->order = [];
-        $this->having = [];
-
-        $this->data = [];
-        $this->havingBind = [];
-        $this->whereBind = [];
-        $this->tempCount =[];
+        $linkID = self::$ins->getConnect();
+        if(!$linkID){
+            $linkID = self::$ins->initConnect();
+        }
+        return new Build($linkID);
     }
 
 
@@ -203,7 +129,7 @@ class Db{
                 $this->links[$linkNum] = new \PDO($config['dsn'], $config['username'], $config['password'], $params);
             } catch (\PDOException $e) {
                 if ($autoConnection) {
-                    return $this->connect($autoConnection, $linkNum);
+                    return $this->connect($config, $linkNum,$autoConnection);
                 } else {
                     throw $e;
                 }
@@ -218,82 +144,123 @@ class Db{
      * @param boolean $master 是否主服务器
      * @return void
      */
-    protected function initConnect($master = true)
+    private function initConnect()
     {
-        if (!empty($this->config['deploy'])) {
-            // 采用分布式数据库
-            if ($master || $this->transTimes) {
-                if (!$this->linkWrite) {
-                    $this->linkWrite = $this->multiConnect(true);
-                }
-                $this->linkID = $this->linkWrite;
-            } else {
-                if (!$this->linkRead) {
-                    $this->linkRead = $this->multiConnect(false);
-                }
-                $this->linkID = $this->linkRead;
-            }
-        } elseif (!$this->linkID) {
-            // 默认单数据库
-            $this->linkID = $this->connect();
-        }
+        $this->close();
+        $this->linkID = $this->connect([],0,true);
+        return $this->linkID;
     }
 
-    /**
-     * 连接分布式服务器
-     * @access protected
-     * @param boolean $master 主服务器
-     * @return PDO
-     */
-    protected function multiConnect($master = false)
-    {
-        $_config = [];
-        // 分布式数据库配置解析
-        foreach (['username', 'password', 'hostname', 'hostport', 'database', 'dsn', 'charset'] as $name) {
-            $_config[$name] = explode(',', $this->config[$name]);
-        }
-
-        // 主服务器序号
-        $m = floor(mt_rand(0, $this->config['master_num'] - 1));
-
-        if ($this->config['rw_separate']) {
-            // 主从式采用读写分离
-            if ($master) // 主服务器写入
-            {
-                $r = $m;
-            } elseif (is_numeric($this->config['slave_no'])) {
-                // 指定服务器读
-                $r = $this->config['slave_no'];
-            } else {
-                // 读操作连接从服务器 每次随机连接的数据库
-                $r = floor(mt_rand($this->config['master_num'], count($_config['hostname']) - 1));
-            }
-        } else {
-            // 读写操作不区分服务器 每次随机连接的数据库
-            $r = floor(mt_rand(0, count($_config['hostname']) - 1));
-        }
-        $dbMaster = false;
-        if ($m != $r) {
-            $dbMaster = [];
-            foreach (['username', 'password', 'hostname', 'hostport', 'database', 'dsn', 'charset'] as $name) {
-                $dbMaster[$name] = isset($_config[$name][$m]) ? $_config[$name][$m] : $_config[$name][0];
-            }
-        }
-        $dbConfig = [];
-        foreach (['username', 'password', 'hostname', 'hostport', 'database', 'dsn', 'charset'] as $name) {
-            $dbConfig[$name] = isset($_config[$name][$r]) ? $_config[$name][$r] : $_config[$name][0];
-        }
-        return $this->connect($dbConfig, $r, $r == $m ? false : $dbMaster);
-    }
-
-    public function getConnection($linkNum=0){
-        return $this->links[$linkNum] ?? false;
+    public function getConnect(){
+        return $this->linkID;
     }
 
 
-    protected function parseDsn($config){
+    private function parseDsn($config){
         return str_replace(['%mysql%','%host%','%port%','%dbname%'],[$config['type'],$config['hostname'],$config['hostport'],$config['database']],"%mysql%:host=%host%;port=%port%;dbname=%dbname%");
     }
+
+    public function close()
+    {
+        $this->linkID    = null;
+        $this->links     = [];
+        return $this;
+    }
+
+
+    /**
+     * 析构方法
+     * @access public
+     */
+    public function __destruct()
+    {
+        // 关闭连接
+        $this->close();
+    }
+}
+
+class Build{
+    //pdo连接
+    protected $linkID ;
+
+    protected $fetchSql=false;
+    protected $table = "";
+    protected $alias = "";
+    protected $distinct = "";
+    protected $where = [];
+    protected $whereCond = 'and'; //全局连接条件
+    protected $group = [];
+    protected $join = [];
+    protected $order = [];
+    protected $field = "*";
+    protected $data = [];
+    protected $having = [];
+    protected $havingCond = 'and';
+    protected $limit = "";
+    protected $force = "";
+    protected $union = "";
+    protected $lock = "";
+    protected $comment = "";
+
+    protected $whereBind = [];
+    protected $havingBind = [];
+    protected $tempCount = [];
+    protected $dataBind = [];
+
+    // 事务指令数
+    protected $transTimes = 0;
+
+
+    // SQL表达式
+    protected $selectSql    = 'SELECT%DISTINCT% %FIELD% FROM %TABLE%%FORCE%%JOIN%%WHERE%%GROUP%%HAVING%%UNION%%ORDER%%LIMIT%%LOCK%%COMMENT%';
+    protected $insertSql    = 'INSERT INTO %TABLE% (%FIELD%) VALUES (%DATA%) %COMMENT%';
+    protected $maxSql    = 'SELECT MAX(%FIELD%) as result FROM %TABLE% ';
+    protected $minSql    = 'SELECT Min(%FIELD%) as result FROM %TABLE% ';
+    protected $insertAllSql = 'INSERT INTO %TABLE% (%FIELD%) VALUES %DATA% %COMMENT%';
+    protected $updateSql    = 'UPDATE %TABLE% SET %SET% %JOIN% %WHERE% %ORDER%%LIMIT% %LOCK%%COMMENT%';
+    protected $deleteSql    = 'DELETE FROM %TABLE% %USING% %JOIN% %WHERE% %ORDER%%LIMIT% %LOCK%%COMMENT%';
+
+    /** @var PDOStatement PDO操作实例 */
+    protected $PDOStatement;
+
+    /** @var string 当前SQL指令 */
+    protected $queryStr = '';
+    // 返回或者影响记录数
+    protected $numRows = 0;
+    // 绑定参数
+    protected $bind = [];
+
+
+    public function reset(){
+        $this->fetchSql = false;
+        $this->whereCond = 'and';
+        $this->havingCond = 'and';
+        $this->alias = "";
+        $this->distinct = "";
+        $this->field = "*";
+        $this->limit = "";
+        $this->force = "";
+        $this->comment = "";
+        $this->lock = "";
+
+        $this->where = [];
+        $this->group = [];
+        $this->join = [];
+        $this->order = [];
+        $this->having = [];
+
+        $this->data = [];
+        $this->havingBind = [];
+        $this->whereBind = [];
+        $this->tempCount =[];
+    }
+
+
+    public function __construct($linkID)
+    {
+        $this->linkID = $linkID;
+    }
+
 
     public function table(string $table){
         $this->table = $table;
@@ -305,7 +272,7 @@ class Db{
         return $this;
     }
 
-    public function  distinct(string $distinct){
+    public function distinct(string $distinct){
         $this->distinct = $distinct;
         return $this;
     }
@@ -559,6 +526,32 @@ class Db{
         return $sql;
     }
 
+    protected function buildMinSql($filed){
+        $sql = str_replace(
+            [
+                '%FIELD%',
+                '%TABLE%',
+            ],
+            [
+                $filed,
+                $this->table.' '.$this->alias,
+            ],
+            $this->minSql
+        );
+        return $sql;
+    }
+    public function min($field){
+        $sql = $this->buildMinSql($field);
+        if($this->fetchSql){
+            $result = $this->getRealSql($sql, []);
+        }else{
+            $result = $this->query($sql,[]);
+        }
+        $this->reset();
+        $return = current($result);
+        return $return['result'] ?? null;
+    }
+
     protected function buildMaxSql($filed){
         $sql = str_replace(
             [
@@ -758,110 +751,39 @@ class Db{
     }
 
 
-
-    /**
-     * 存储过程的输入输出参数绑定
-     * @access public
-     * @param array $bind 要绑定的参数列表
-     * @return void
-     * @throws Exception
-     */
-    protected function bindParam($bind)
+    public function query($sql, $bind = [],$fetchAll=true)
     {
-        foreach ($bind as $key => $val) {
-            $param = is_numeric($key) ? $key + 1 : ':' . $key;
-            if (is_array($val)) {
-                array_unshift($val, $param);
-                $result = call_user_func_array([$this->PDOStatement, 'bindParam'], $val);
-            } else {
-                $result = $this->PDOStatement->bindValue($param, $val);
-            }
-            if (!$result) {
-                $param = array_shift($val);
-                throw new \Exception(
-                    "Error occurred  when binding parameters '{$param}'\r\n".
-                    $this->getLastsql()."\r\n"
-                );
-            }
-        }
-    }
-
-    /**
-     * 参数绑定
-     * 支持 ['name'=>'value','id'=>123] 对应命名占位符
-     * 或者 ['value',123] 对应问号占位符
-     * @access public
-     * @param array $bind 要绑定的参数列表
-     * @return void
-     * @throws Exception
-     */
-    protected function bindValue(array $bind = [])
-    {
-        foreach ($bind as $key => $val) {
-            // 占位符
-            $param = is_numeric($key) ? $key + 1 : ':' . $key;
-            if (is_array($val)) {
-                if (\PDO::PARAM_INT == $val[1] && '' === $val[0]) {
-                    $val[0] = 0;
-                }
-                $result = $this->PDOStatement->bindValue($param, $val[0], $val[1]);
-            } else {
-                $result = $this->PDOStatement->bindValue($param, $val);
-            }
-            if (!$result) {
-                throw new \Exception(
-                    "Error occurred  when binding parameters '{$param}'\r\n".
-                    $this->getLastsql()."\r\n"
-                );
-            }
-        }
-    }
-
-    public function query($sql, $bind = [], $master = false, $pdo = false,$fetchAll=true)
-    {
-        $this->initConnect($master);
         if (!$this->linkID) {
             return false;
         }
-
         // 记录SQL语句
         $this->queryStr = $sql;
         if ($bind) {
             $this->bind = $bind;
         }
-
-        Db::$queryTimes++;
         try {
-
             // 预处理
             $this->PDOStatement = $this->linkID->prepare($sql);
-
-            // 是否为存储过程调用
-            $procedure = in_array(strtolower(substr(trim($sql), 0, 4)), ['call', 'exec']);
-            // 参数绑定
-            if ($procedure) {
-
-                $this->bindParam($bind);
-            } else {
-                $this->bindValue($bind);
-            }
             // 执行查询
-            $this->PDOStatement->execute();
+            $this->PDOStatement->execute($bind);
             // 返回结果集
-            return $this->getResult($pdo, $procedure,$fetchAll);
+            return $this->getResult($fetchAll);
         } catch (\PDOException $e) {
             if ($this->isBreak($e)) {
-                return $this->close()->query($sql, $bind, $master, $pdo);
+                $this->linkID = Db::$ins->initConnect();
+                return $this->free()->query($sql, $bind);
             }
-            throw new \PDOException($e, $this->config, $this->getLastsql());
+            throw new \PDOException($e);
         } catch (\Throwable $e) {
             if ($this->isBreak($e)) {
-                return $this->close()->query($sql, $bind, $master, $pdo);
+                $this->linkID = Db::$ins->initConnect();
+                return $this->free()->query($sql, $bind);
             }
             throw $e;
         } catch (\Exception $e) {
             if ($this->isBreak($e)) {
-                return $this->close()->query($sql, $bind, $master, $pdo);
+                $this->linkID = Db::$ins->initConnect();
+                return $this->free()->query($sql, $bind);
             }
             throw $e;
         }
@@ -879,7 +801,7 @@ class Db{
      */
     public function execute($sql, $bind = [], $query = null)
     {
-        $this->initConnect(true);
+
         if (!$this->linkID) {
             return false;
         }
@@ -890,39 +812,30 @@ class Db{
             $this->bind = $bind;
         }
 
-        self::$executeTimes++;
-
-
         try {
             // 预处理
             $this->PDOStatement = $this->linkID->prepare($sql);
-
-            // 是否为存储过程调用
-            $procedure = in_array(strtolower(substr(trim($sql), 0, 4)), ['call', 'exec']);
-            // 参数绑定
-            if ($procedure) {
-                $this->bindParam($bind);
-            } else {
-                $this->bindValue($bind);
-            }
             // 执行语句
-            $this->PDOStatement->execute();
+            $this->PDOStatement->execute($bind);
 
             $this->numRows = $this->PDOStatement->rowCount();
             return $this->numRows;
         } catch (\PDOException $e) {
             if ($this->isBreak($e)) {
-                return $this->close()->execute($sql, $bind, $query);
+                $this->linkID = Db::$ins->initConnect();
+                return $this->free()->execute($sql, $bind);
             }
-            throw new \PDOException($e."\r\n"."\r\n".$this->getLastsql());
+            throw new \PDOException($e);
         } catch (\Throwable $e) {
             if ($this->isBreak($e)) {
-                return $this->close()->execute($sql, $bind, $query);
+                $this->linkID = Db::$ins->initConnect();
+                return $this->free()->execute($sql, $bind);
             }
             throw $e;
         } catch (\Exception $e) {
             if ($this->isBreak($e)) {
-                return $this->close()->execute($sql, $bind, $query);
+                $this->linkID = Db::$ins->initConnect();
+                return $this->free()->execute($sql, $bind);
             }
             throw $e;
         }
@@ -942,44 +855,21 @@ class Db{
      * @param bool   $procedure 是否存储过程
      * @return PDOStatement|array
      */
-    protected function getResult($pdo = false, $procedure = false,$fetchAll = true)
+    protected function getResult($fetchAll = true)
     {
-        if ($pdo) {
-            // 返回PDOStatement对象处理
-            return $this->PDOStatement;
-        }
-        if ($procedure) {
-            // 存储过程返回结果
-            return $this->procedure();
-        }
+
         if($fetchAll){
-            $result        = $this->PDOStatement->fetchAll($this->fetchType);
+            $result        = $this->PDOStatement->fetchAll();
             $this->numRows = count($result);
         }else{
-            $result        = $this->PDOStatement->fetch($this->fetchType);
+            $result        = $this->PDOStatement->fetch();
             $this->numRows = 1;
         }
 
         return $result;
     }
 
-    /**
-     * 获得存储过程数据集
-     * @access protected
-     * @return array
-     */
-    protected function procedure()
-    {
-        $item = [];
-        do {
-            $result = $this->getResult();
-            if ($result) {
-                $item[] = $result;
-            }
-        } while ($this->PDOStatement->nextRowset());
-        $this->numRows = count($item);
-        return $item;
-    }
+
 
     /**
      * 是否断线
@@ -989,10 +879,6 @@ class Db{
      */
     protected function isBreak($e)
     {
-        if (!$this->config['break_reconnect']) {
-            return false;
-        }
-
         $info = [
             'server has gone away',
             'no connection to the server',
@@ -1016,16 +902,7 @@ class Db{
         }
         return false;
     }
-    public function close()
-    {
-        $this->linkID    = null;
-        $this->linkWrite = null;
-        $this->linkRead  = null;
-        $this->links     = [];
-        // 释放查询
-        $this->free();
-        return $this;
-    }
+
     /**
      * 释放查询结果
      * @access public
@@ -1033,6 +910,7 @@ class Db{
     public function free()
     {
         $this->PDOStatement = null;
+        return $this;
     }
 
     /**
@@ -1096,13 +974,14 @@ class Db{
     public function __destruct()
     {
         $this->reset();
+        $this->linkID = null;
         // 释放查询
         if ($this->PDOStatement) {
             $this->free();
         }
-        // 关闭连接
-        $this->close();
     }
 }
+
+
 
 
