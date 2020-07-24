@@ -3,7 +3,7 @@ namespace zusux;
 use Exception;
 
 class Db{
-    public static $ins;
+    public static $ins =[];
     protected $dsn="mysql:host=%host%;dbname=%dbname%";
     protected $config = [
         // 数据库类型
@@ -61,14 +61,16 @@ class Db{
         \PDO::ATTR_ORACLE_NULLS      => \PDO::NULL_NATURAL,
         \PDO::ATTR_STRINGIFY_FETCHES => false,
         \PDO::ATTR_EMULATE_PREPARES  => false,
-        \PDO::ATTR_PERSISTENT => false //持久连接
+        \PDO::ATTR_PERSISTENT => false, //持久连接
+
+        \PDO::ATTR_TIMEOUT => 1, // in seconds
+
     ];
 
     private $links=[];
     /** @var PDO 当前连接ID */
     protected $linkID;
-    // 查询结果类型
-    protected $fetchType = \PDO::FETCH_ASSOC;
+
     // 字段属性大小写
     protected $attrCase = \PDO::CASE_LOWER;
 
@@ -81,12 +83,18 @@ class Db{
     }
 
     public static function instance($config=[]){
-        if(!self::$ins){
-            self::$ins = new static($config);
+        $md5 = md5(serialize($config));
+        if(!isset(self::$ins[$md5])){
+            self::$ins[$md5] = new static($config);
+        }else{
+            if(!self::$ins[$md5]){
+                self::$ins[$md5] = new static($config);
+            }
         }
-        $linkID = self::$ins->getConnect();
+        $ins = self::$ins[$md5];
+        $linkID = $ins->getConnect();
         if(!$linkID){
-            $linkID = self::$ins->initConnect();
+            $linkID = $ins->initConnect();
         }
         return new Build($linkID);
     }
@@ -128,6 +136,7 @@ class Db{
                 }
                 $this->links[$linkNum] = new \PDO($config['dsn'], $config['username'], $config['password'], $params);
             } catch (\PDOException $e) {
+
                 if ($autoConnection) {
                     return $this->connect($config, $linkNum,$autoConnection);
                 } else {
@@ -230,6 +239,8 @@ class Build{
     // 绑定参数
     protected $bind = [];
 
+    // 查询结果类型
+    protected $fetchType = \PDO::FETCH_ASSOC;
 
     public function reset(){
         $this->fetchSql = false;
@@ -400,7 +411,7 @@ class Build{
     }
 
     public function order(string $field,string $order='asc'){
-        $this->order[] =  implode(' ',['`'.$field.'`',$order]);
+        $this->order[] =  implode(' ',[$field ,$order]);
         return $this;
     }
 
@@ -697,6 +708,25 @@ class Build{
         return $result;
     }
 
+    public function value($field){
+        $this->limit = "";
+        $this->field([$field]);
+        $sql = $this->buildSelectSql();
+
+        if($this->fetchSql){
+            $result = $this->getRealSql($sql, array_merge($this->whereBind,$this->havingBind));
+            return $result;
+        }else{
+            $result = $this->query($sql,array_merge($this->whereBind,$this->havingBind),false,false,false);
+            $this->reset();
+            if($result){
+                return $result[$field];
+            }else{
+                return null;
+            }
+        }
+    }
+
     protected function buildDeleteSql(){
         if(!$this->where){
             throw new \Exception('不允许全表删除');
@@ -857,15 +887,13 @@ class Build{
      */
     protected function getResult($fetchAll = true)
     {
-
         if($fetchAll){
-            $result        = $this->PDOStatement->fetchAll();
+            $result        = $this->PDOStatement->fetchAll($this->fetchType);
             $this->numRows = count($result);
         }else{
-            $result        = $this->PDOStatement->fetch();
+            $result        = $this->PDOStatement->fetch($this->fetchType);
             $this->numRows = 1;
         }
-
         return $result;
     }
 
@@ -967,6 +995,10 @@ class Build{
         return $this->linkID ? $this->linkID->quote($str) : $str;
     }
 
+    public function close(){
+        $this->linkID = null;
+    }
+
     /**
      * 析构方法
      * @access public
@@ -981,7 +1013,3 @@ class Build{
         }
     }
 }
-
-
-
-
