@@ -775,7 +775,7 @@ class Build{
     }
 
     public function limit(int $limit,?int $number=null){
-        $limitStr = $number ?  " limit ".$limit.",".$number : " limit ".$limit;
+        $limitStr = $number ?  " limit ".$number.",".$limit : " limit ".$limit;
         $this->limit = $limitStr;
         return $this;
     }
